@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phnom Penh Eye Clinic - Performance Dashboard & KPI</title>
+    
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+    <script src="assets/js/firebase-config.js"></script>
+    
+    <!-- Custom Styles -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Hanuman:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Hanuman', 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #f1f5f9;
+            overflow-x: hidden;
+        }
+
+        .compact-card {
+            min-width: 0;
+        }
+        
+        .table-container::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #e2e8f0;
+            border-radius: 8px;
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 8px;
+        }
+        .table-container::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        .excel-input {
+            width: 100%;
+            background: transparent;
+            border: 1px solid transparent;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .excel-input:hover {
+            border-color: #cbd5e1;
+        }
+        .excel-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            background: #fff;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+        }
+
+        .sticky-col-1 { left: 0px; position: sticky; z-index: 10; background: inherit; }
+        .sticky-col-2 { left: 40px; position: sticky; z-index: 10; background: inherit; }
+        
+        @keyframes fillBar {
+            from { width: 0; }
+        }
+        .animate-bar {
+            animation: fillBar 1s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        function App() {
+            const [kpiList, setKpiList] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const [isSaving, setIsSaving] = useState(false);
+            const [saveStatus, setSaveStatus] = useState("រក្សាទុក (Save)");
+
+            // Load data from Firestore when the app starts
+            useEffect(() => {
+                const db = getFirebaseDb();
+                if (!db) {
+                    setIsLoading(false);
+                    return;
+                }
+
+                setIsLoading(true);
+
+                const collectionRef = db.collection("ppec_kpi");
+                const legacyDocRef = db.collection("ppec_kpi").doc("dashboard");
+
+                Promise.all([
+                    collectionRef.get(),
+                    legacyDocRef.get()
+                ])
+                .then(([querySnapshot, legacyDoc]) => {
+                    const collectionData = querySnapshot.docs
+                        .filter((doc) => doc.id !== "dashboard")
+                        .map((doc) => {
+                            const data = doc.data() || {};
+                            return {
+                                ...data,
+                                id: Number(doc.id) || data.id || Date.now(),
+                                name: data.name || "",
+                                department: data.department || "",
+                                position: data.position || "",
+                                dateCreated: data.dateCreated || "",
+                                goal1: data.goal1 || "",
+                                goal2: data.goal2 || "",
+                                goal3: data.goal3 || "",
+                                progress1: Number(data.progress1) || 0,
+                                progress2: Number(data.progress2) || 0,
+                                progress3: Number(data.progress3) || 0,
+                            };
+                        })
+                        .sort((a, b) => Number(a.id) - Number(b.id));
+
+                    const legacyData = legacyDoc.exists && Array.isArray(legacyDoc.data().data)
+                        ? legacyDoc.data().data
+                        : [];
+
+                    const mergedData = [...collectionData, ...legacyData].reduce((acc, item) => {
+                        if (!item || typeof item !== 'object') return acc;
+                        const normalizedId = String(item.id ?? Date.now() + Math.random());
+                        acc[normalizedId] = {
+                            ...item,
+                            id: Number(normalizedId) || normalizedId,
+                            name: item.name || "",
+                            department: item.department || "",
+                            position: item.position || "",
+                            dateCreated: item.dateCreated || "",
+                            goal1: item.goal1 || "",
+                            goal2: item.goal2 || "",
+                            goal3: item.goal3 || "",
+                            progress1: Number(item.progress1) || 0,
+                            progress2: Number(item.progress2) || 0,
+                            progress3: Number(item.progress3) || 0,
+                        };
+                        return acc;
+                    }, {});
+
+                    const finalData = Object.values(mergedData).sort((a, b) => Number(a.id) - Number(b.id));
+
+                    if (finalData.length > 0) {
+                        setKpiList(finalData);
+                        if (legacyData.length > 0 && collectionData.length === 0) {
+                            saveToBackend(finalData);
+                        }
+                    } else {
+                        setKpiList([]);
+                    }
+
+                    setIsLoading(false);
+                })
+                .catch((err) => {
+                    console.error("Error loading data from Firebase:", err);
+                    setKpiList([]);
+                    setIsLoading(false);
+                });
+            }, []);
+
+            // Save data to Firestore as one document per staff
+            const saveToBackend = (dataToSave) => {
+                const db = getFirebaseDb();
+                if (!db) {
+                    setIsSaving(false);
+                    setSaveStatus("Firebase not configured");
+                    return;
+                }
+
+                setIsSaving(true);
+                setSaveStatus("កំពុងរក្សាទុក...");
+
+                const collectionRef = db.collection("ppec_kpi");
+                collectionRef.get()
+                    .then((snapshot) => {
+                        const desiredIds = new Set(dataToSave.map((item) => String(item.id)));
+
+                        const deletions = snapshot.docs
+                            .filter((doc) => doc.id !== "dashboard" && !desiredIds.has(String(doc.id)))
+                            .map((doc) => doc.ref.delete());
+
+                        const legacyDelete = db.collection("ppec_kpi").doc("dashboard").delete().catch(() => {});
+
+                        const writes = dataToSave.map((item) => {
+                            const cleanItem = { ...item, id: Number(item.id) || item.id };
+                            return collectionRef.doc(String(cleanItem.id)).set({
+                                ...cleanItem,
+                                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                            });
+                        });
+
+                        return Promise.all([...deletions, legacyDelete, ...writes]);
+                    })
+                    .then(() => {
+                        setIsSaving(false);
+                        setSaveStatus("បានរក្សាទុក! (Saved!)");
+                        setTimeout(() => setSaveStatus("រក្សាទុក (Save)"), 2000);
+                    })
+                    .catch((err) => {
+                        setIsSaving(false);
+                        setSaveStatus("រក្សាទុក (Save)");
+                        alert("បរាជ័យក្នុងការរក្សាទុកទៅ Firebase: " + err.message);
+                    });
+            };
+
+            const parseCSVText = (text) => {
+                const rows = [];
+                let currentRow = [];
+                let currentCell = '';
+                let inQuotes = false;
+                
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    if (char === '"' && text[i+1] === '"') {
+                        currentCell += '"';
+                        i++;
+                    } else if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === ',' && !inQuotes) {
+                        currentRow.push(currentCell);
+                        currentCell = '';
+                    } else if ((char === '\n' || char === '\r') && !inQuotes) {
+                        if (char === '\r' && text[i+1] === '\n') i++;
+                        currentRow.push(currentCell);
+                        rows.push(currentRow);
+                        currentRow = [];
+                        currentCell = '';
+                    } else {
+                        currentCell += char;
+                    }
+                }
+                if (currentRow.length > 0 || currentCell !== '') {
+                    currentRow.push(currentCell);
+                    rows.push(currentRow);
+                }
+
+                if (rows.length > 0) rows.shift();
+                
+                return rows.filter(row => row.length > 5).map((row, idx) => {
+                    const rawId = row[0] || "";
+                    const parsedId = Number(String(rawId).trim());
+
+                    return {
+                        id: Number.isFinite(parsedId) && parsedId > 0 ? parsedId : Date.now() + idx,
+                        name: row[1] || "",
+                        department: row[2] || "",
+                        position: row[3] || "",
+                        dateCreated: row[4] || "",
+                        goal1: row[5] || "", start1: row[6] || "", finish1: row[7] || "", progress1: Number(row[8] || 0),
+                        goal2: row[9] || "", start2: row[10] || "", finish2: row[11] || "", progress2: Number(row[12] || 0),
+                        goal3: row[13] || "", start3: row[14] || "", finish3: row[15] || "", progress3: Number(row[16] || 0),
+                    };
+                });
+            };
+
+            const [viewMode, setViewMode] = useState("dashboard");
+            const [searchQuery, setSearchQuery] = useState("");
+            const [selectedDept, setSelectedDept] = useState("All");
+            const [selectedGrade, setSelectedGrade] = useState("All");
+
+            const [currentTime, setCurrentTime] = useState(new Date());
+
+            const [deleteTargetId, setDeleteTargetId] = useState(null);
+            const [deletePassword, setDeletePassword] = useState("");
+            const [deleteError, setDeleteError] = useState("");
+
+            const [showImportAuth, setShowImportAuth] = useState(false);
+            const [importPassword, setImportPassword] = useState("");
+            const [importError, setImportError] = useState("");
+
+            const [selectedStaffInfo, setSelectedStaffInfo] = useState(null);
+            const [focusStaffId, setFocusStaffId] = useState(null);
+
+            const calculateTotalCompletion = (item) => {
+                const p1 = Number(item.progress1) || 0;
+                const p2 = Number(item.progress2) || 0;
+                const p3 = Number(item.progress3) || 0;
+                return Math.round((p1 + p2 + p3) / 3);
+            };
+
+            const getPerformanceGrade = (completion) => {
+                if (completion >= 95) {
+                    return { grade: "Exceeds Expectations", kh: "ល្អប្រសើរណាស់", bg: "bg-emerald-100", color: "text-emerald-800", border: "border-emerald-300" };
+                }
+                if (completion >= 75) {
+                    return { grade: "Meets Expectations", kh: "តាមផែនការ", bg: "bg-blue-100", color: "text-blue-800", border: "border-blue-300" };
+                }
+                return { grade: "Needs Improvement", kh: "ត្រូវការស្ថាបនា", bg: "bg-rose-100", color: "text-rose-800", border: "border-rose-300" };
+            };
+
+            const getProgressColor = (progress) => {
+                const p = Number(progress) || 0;
+                if (p >= 110) return { border: 'border-teal-100', side: 'bg-teal-500', textHeader: 'text-teal-500', textPercent: 'text-teal-700', bgPercent: 'bg-teal-50', bar: 'bg-teal-500' };
+                if (p >= 90) return { border: 'border-emerald-100', side: 'bg-emerald-500', textHeader: 'text-emerald-500', textPercent: 'text-emerald-700', bgPercent: 'bg-emerald-50', bar: 'bg-emerald-500' };
+                if (p >= 60) return { border: 'border-amber-100', side: 'bg-amber-500', textHeader: 'text-amber-500', textPercent: 'text-amber-700', bgPercent: 'bg-amber-50', bar: 'bg-amber-500' };
+                if (p >= 30) return { border: 'border-orange-100', side: 'bg-orange-500', textHeader: 'text-orange-500', textPercent: 'text-orange-700', bgPercent: 'bg-orange-50', bar: 'bg-orange-500' };
+                return { border: 'border-rose-100', side: 'bg-rose-500', textHeader: 'text-rose-500', textPercent: 'text-rose-700', bgPercent: 'bg-rose-50', bar: 'bg-rose-500' };
+            };
+
+            useEffect(() => {
+                const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (viewMode === 'sheet' && focusStaffId !== null) {
+                    setTimeout(() => {
+                        const inputElement = document.getElementById(`staff-name-input-${focusStaffId}`);
+                        const rowElement = document.getElementById(`staff-row-${focusStaffId}`);
+                        if (inputElement) {
+                            inputElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            inputElement.focus();
+                            if (rowElement) {
+                                rowElement.classList.add('bg-blue-100');
+                                setTimeout(() => rowElement.classList.remove('bg-blue-100'), 2000);
+                            }
+                        }
+                        setFocusStaffId(null);
+                    }, 100);
+                }
+            }, [viewMode, focusStaffId]);
+
+            const handleCellChange = (id, field, value) => {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const today = `${year}-${month}-${day}`;
+
+                const updatedList = kpiList.map(item => {
+                    if (item.id === id) {
+                        return { 
+                            ...item, 
+                            [field]: value,
+                            dateCreated: field === 'dateCreated' ? value : today
+                        };
+                    }
+                    return item;
+                });
+
+                setKpiList(updatedList);
+            };
+
+            const handleManualSave = () => {
+                saveToBackend(kpiList);
+            };
+
+            const handleAddStaff = () => {
+                const newId = kpiList.length > 0 ? Math.max(...kpiList.map(item => item.id)) + 1 : 1;
+                const newStaff = {
+                    id: newId,
+                    name: "",
+                    department: "10 DOCTO ក្រុមវេជ្ជបណ្ឌិត (Doctor Team)",
+                    position: "",
+                    dateCreated: new Date().toISOString().split('T')[0],
+                    goal1: "", start1: "", finish1: "", status1: "", progress1: 0,
+                    goal2: "", start2: "", finish2: "", status2: "", progress2: 0,
+                    goal3: "", start3: "", finish3: "", status3: "", progress3: 0,
+                };
+                const updatedList = [newStaff, ...kpiList];
+                setKpiList(updatedList);
+                setViewMode("sheet");
+                saveToBackend(updatedList);
+            };
+
+            const handleGoToEdit = (id) => {
+                setSearchQuery("");
+                setSelectedDept("All");
+                setSelectedGrade("All");
+                setViewMode('sheet');
+                setFocusStaffId(id);
+                setSelectedStaffInfo(null);
+            };
+
+            const promptDeleteStaff = (id) => {
+                setDeleteTargetId(id);
+                setDeletePassword("");
+                setDeleteError("");
+            };
+
+            const confirmDelete = () => {
+                if (deletePassword === "123123") {
+                    const updatedList = kpiList.filter(item => item.id !== deleteTargetId);
+                    setKpiList(updatedList);
+                    setDeleteTargetId(null);
+                    saveToBackend(updatedList);
+                } else {
+                    setDeleteError("លេខសម្ងាត់មិនត្រឹមត្រូវ! (Incorrect password!)");
+                }
+            };
+
+            const cancelDelete = () => {
+                setDeleteTargetId(null);
+                setDeletePassword("");
+                setDeleteError("");
+            };
+
+            const promptImport = () => {
+                setShowImportAuth(true);
+                setImportPassword("");
+                setImportError("");
+            };
+
+            const confirmImportAuth = () => {
+                if (importPassword === "123123") {
+                    setShowImportAuth(false);
+                    document.getElementById('csv-import-input').click();
+                } else {
+                    setImportError("លេខសម្ងាត់មិនត្រឹមត្រូវ! (Incorrect password!)");
+                }
+            };
+
+            const cancelImportAuth = () => {
+                setShowImportAuth(false);
+                setImportPassword("");
+                setImportError("");
+            };
+
+            const filteredData = useMemo(() => {
+                return kpiList.filter(item => {
+                    if (!item || typeof item !== 'object') return false;
+
+                    const itemName = String(item.name || '').toLowerCase();
+                    const itemPosition = String(item.position || '').toLowerCase();
+                    const itemDepartment = String(item.department || '');
+                    const query = String(searchQuery || '').toLowerCase();
+
+                    const matchesDept = selectedDept === "All" || itemDepartment.includes(selectedDept);
+                    const matchesSearch = itemName.includes(query) || itemPosition.includes(query);
+
+                    const overallComp = calculateTotalCompletion(item);
+                    const grade = getPerformanceGrade(overallComp).grade;
+                    const matchesGrade = selectedGrade === "All" || grade === selectedGrade;
+
+                    return matchesDept && matchesSearch && matchesGrade;
+                });
+            }, [kpiList, selectedDept, searchQuery, selectedGrade]);
+
+            const dashboardStats = useMemo(() => {
+                if (filteredData.length === 0) return null;
+                
+                let sumCompletion = 0;
+                let exceeds = 0;
+                let meets = 0;
+                let below = 0;
+                
+                const deptScores = {};
+
+                filteredData.forEach(item => {
+                    const comp = calculateTotalCompletion(item);
+                    sumCompletion += comp;
+
+                    if (comp >= 95) exceeds++;
+                    else if (comp >= 75) meets++;
+                    else below++;
+
+                    const deptKey = String(item.department || 'Unknown');
+                    if (!deptScores[deptKey]) deptScores[deptKey] = { total: 0, count: 0 };
+                    deptScores[deptKey].total += comp;
+                    deptScores[deptKey].count += 1;
+                });
+
+                const avgOverall = Math.round(sumCompletion / filteredData.length);
+                
+                const deptAverages = Object.keys(deptScores).map(dept => ({
+                    dept,
+                    avg: Math.round(deptScores[dept].total / deptScores[dept].count)
+                })).sort((a, b) => b.avg - a.avg);
+
+                return { avgOverall, exceeds, meets, below, totalStaff: filteredData.length, deptAverages };
+            }, [filteredData]);
+
+            const handleExportCSV = () => {
+                const headers = [
+                    "ID", "Name", "Department", "Position", "Date Created",
+                    "Goal 1", "Start 1", "Finish 1", "Progress 1 (%)",
+                    "Goal 2", "Start 2", "Finish 2", "Progress 2 (%)",
+                    "Goal 3", "Start 3", "Finish 3", "Progress 3 (%)",
+                    "Overall Completion (%)", "Performance Grade"
+                ];
+                
+                const csvRows = [headers.join(",")];
+                
+                kpiList.forEach(item => {
+                    const overallComp = calculateTotalCompletion(item);
+                    const gradeInfo = getPerformanceGrade(overallComp);
+                    
+                    const row = [
+                        item.id,
+                        `"${(item.name || '').replace(/"/g, '""')}"`,
+                        `"${(item.department || '').replace(/"/g, '""')}"`,
+                        `"${(item.position || '').replace(/"/g, '""')}"`,
+                        item.dateCreated,
+                        `"${(item.goal1 || '').replace(/"/g, '""')}"`, item.start1, item.finish1, item.progress1,
+                        `"${(item.goal2 || '').replace(/"/g, '""')}"`, item.start2, item.finish2, item.progress2,
+                        `"${(item.goal3 || '').replace(/"/g, '""')}"`, item.start3, item.finish3, item.progress3,
+                        overallComp,
+                        `"${gradeInfo.grade}"`
+                    ];
+                    csvRows.push(row.join(","));
+                });
+                
+                const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + csvRows.join("\n");
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `PPEC_Staff_KPI_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const normalizeStaffKey = (item) => {
+                return [
+                    String(item?.name || '').trim().toLowerCase(),
+                    String(item?.department || '').trim().toLowerCase(),
+                    String(item?.position || '').trim().toLowerCase()
+                ].join('|');
+            };
+
+            const mergeImportedData = (existingList, importedList) => {
+                const merged = [...existingList];
+                const map = new Map(existingList.map(item => [normalizeStaffKey(item), item]));
+
+                importedList.forEach((item) => {
+                    const key = normalizeStaffKey(item);
+                    const existingIndex = merged.findIndex(existing => normalizeStaffKey(existing) === key);
+
+                    if (existingIndex >= 0) {
+                        merged[existingIndex] = {
+                            ...merged[existingIndex],
+                            ...item,
+                            id: merged[existingIndex].id
+                        };
+                    } else {
+                        merged.push({
+                            ...item,
+                            id: Number(item.id) || Date.now() + Math.random()
+                        });
+                    }
+
+                    map.set(key, item);
+                });
+
+                return merged;
+            };
+
+            const handleImportCSV = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const text = event.target.result;
+                    const newData = parseCSVText(text);
+
+                    if (newData.length > 0) {
+                        const mergedData = mergeImportedData(kpiList, newData);
+                        setKpiList(mergedData);
+                        saveToBackend(mergedData);
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+            };
+
+            const renderDashboard = () => {
+                if (!dashboardStats) return <div className="p-8 text-center text-slate-500">គ្មានទិន្នន័យ (No Data)</div>;
+
+                const exceedsStaff = filteredData.filter(item => calculateTotalCompletion(item) >= 95);
+                const meetsStaff = filteredData.filter(item => { 
+                    const comp = calculateTotalCompletion(item); 
+                    return comp >= 75 && comp < 95; 
+                });
+                const belowStaff = filteredData.filter(item => calculateTotalCompletion(item) < 75);
+
+                const recentUpdates = [...filteredData].sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)).slice(0, 6);
+                const oldestUpdates = [...filteredData].sort((a, b) => new Date(a.dateCreated) - new Date(b.dateCreated)).slice(0, 6);
+
+                return (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div className="compact-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-indigo-500">
+                                <p className="text-sm text-slate-500 mb-1 font-semibold">ភាគរយសម្រេចសរុប (Overall Completion)</p>
+                                <div className="flex items-end gap-2">
+                                    <h3 className="text-4xl font-bold text-slate-800">{dashboardStats.avgOverall}%</h3>
+                                </div>
+                            </div>
+                            <div className="compact-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-emerald-500">
+                                <p className="text-sm text-slate-500 mb-1 font-semibold">Exceeds Expectations</p>
+                                <div className="flex items-end gap-2">
+                                    <h3 className="text-4xl font-bold text-emerald-600">{dashboardStats.exceeds}</h3>
+                                    <span className="text-sm text-slate-400 mb-1">នាក់ (Staff)</span>
+                                </div>
+                            </div>
+                            <div className="compact-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-blue-500">
+                                <p className="text-sm text-slate-500 mb-1 font-semibold">Meets Expectations</p>
+                                <div className="flex items-end gap-2">
+                                    <h3 className="text-4xl font-bold text-blue-600">{dashboardStats.meets}</h3>
+                                    <span className="text-sm text-slate-400 mb-1">នាក់ (Staff)</span>
+                                </div>
+                            </div>
+                            <div className="compact-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-rose-500">
+                                <p className="text-sm text-slate-500 mb-1 font-semibold">Needs Improvement</p>
+                                <div className="flex items-end gap-2">
+                                    <h3 className="text-4xl font-bold text-rose-600">{dashboardStats.below}</h3>
+                                    <span className="text-sm text-slate-400 mb-1">នាក់ (Staff)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
+                                <h3 className="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <div className="p-1.5 bg-blue-100 text-blue-600 rounded-lg">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" /></svg>
+                                    </div>
+                                    ទើបធ្វើបច្ចុប្បន្នភាពថ្មីៗ (Most Recently Updated)
+                                </h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {recentUpdates.map((staff, i) => (
+                                        <div key={i} onClick={() => setSelectedStaffInfo(staff)} className="cursor-pointer flex items-center justify-between gap-2 px-3 py-2 bg-blue-50/50 rounded-lg border border-blue-100 hover:shadow-md hover:border-blue-300 transition hover:-translate-y-0.5 min-w-0">
+                                            <div className="min-w-0 flex-1 overflow-hidden">
+                                                <p className="font-bold text-slate-800 truncate text-[13px]">{staff.name}</p>
+                                            </div>
+                                            <div className="flex-shrink-0 text-right pl-1">
+                                                <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded border border-blue-200 whitespace-nowrap">
+                                                    {staff.dateCreated}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {recentUpdates.length === 0 && <p className="text-sm text-slate-500 italic p-2">មិនមានទិន្នន័យ...</p>}
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
+                                <h3 className="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <div className="p-1.5 bg-amber-100 text-amber-600 rounded-lg">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    </div>
+                                    មិនទាន់បានធ្វើបច្ចុប្បន្នភាព (Least Recently Updated)
+                                </h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {oldestUpdates.map((staff, i) => (
+                                        <div key={i} onClick={() => setSelectedStaffInfo(staff)} className="cursor-pointer flex items-center justify-between gap-2 px-3 py-2 bg-amber-50/30 rounded-lg border border-amber-100 hover:shadow-md hover:border-amber-300 transition hover:-translate-y-0.5 min-w-0">
+                                            <div className="min-w-0 flex-1 overflow-hidden">
+                                                <p className="font-bold text-slate-800 truncate text-[13px]">{staff.name}</p>
+                                            </div>
+                                            <div className="flex-shrink-0 text-right pl-1">
+                                                <span className="inline-block px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded border border-amber-200 whitespace-nowrap">
+                                                    {staff.dateCreated}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {oldestUpdates.length === 0 && <p className="text-sm text-slate-500 italic p-2">មិនមានទិន្នន័យ...</p>}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="text-lg font-bold text-slate-800 mb-6">📊 លទ្ធផលតាមផ្នែក (Department Performance)</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {dashboardStats.deptAverages.map((d, i) => {
+                                    const displayPercent = Number(d.avg) || 0;
+                                    const visualPercent = Math.min(Math.max(displayPercent, 0), 100);
+
+                                    return (
+                                        <div key={i} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                            <div className="flex justify-between text-sm mb-2 gap-2">
+                                                <span className="font-bold text-slate-700 truncate pr-2">{d.dept}</span>
+                                                <span className="font-bold text-slate-900 whitespace-nowrap">{d.avg}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                                <div className={`h-2.5 rounded-full animate-bar ${d.avg >= 95 ? 'bg-emerald-500' : d.avg >= 75 ? 'bg-blue-500' : 'bg-rose-500'}`} style={{ width: `${visualPercent}%` }}></div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col max-h-[600px]">
+                                <h3 className="text-lg font-bold text-emerald-700 mb-4 flex items-center gap-2">🏆 ល្អប្រសើរណាស់ (Exceeds)</h3>
+                                <div className="space-y-3 overflow-y-auto pr-2 flex-1">
+                                    {exceedsStaff.map((staff, i) => (
+                                        <div key={i} onClick={() => setSelectedStaffInfo(staff)} className="cursor-pointer flex items-center justify-between gap-2 p-3 bg-emerald-50 rounded-xl border border-emerald-100 transition hover:shadow-md hover:border-emerald-300 hover:-translate-y-0.5 min-w-0">
+                                            <div className="min-w-0 flex-1 overflow-hidden">
+                                                <p className="font-bold text-emerald-900 truncate">{staff.name}</p>
+                                                <p className="text-xs text-emerald-700 truncate">{staff.position}</p>
+                                            </div>
+                                            <div className="flex-shrink-0 text-right pl-1">
+                                                <span className="inline-block px-2.5 py-1 bg-emerald-200 text-emerald-900 text-xs font-black rounded-full whitespace-nowrap">
+                                                    {calculateTotalCompletion(staff)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {exceedsStaff.length === 0 && (
+                                        <p className="text-sm text-slate-500 italic p-4 text-center bg-slate-50 rounded-xl">មិនមានទិន្នន័យសម្រាប់ពេលនេះ...</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col max-h-[600px]">
+                                <h3 className="text-lg font-bold text-blue-700 mb-4 flex items-center gap-2">✅ តាមផែនការ (Meets)</h3>
+                                <div className="space-y-3 overflow-y-auto pr-2 flex-1">
+                                    {meetsStaff.map((staff, i) => (
+                                        <div key={i} onClick={() => setSelectedStaffInfo(staff)} className="cursor-pointer flex items-center justify-between gap-2 p-3 bg-blue-50 rounded-xl border border-blue-100 transition hover:shadow-md hover:border-blue-300 hover:-translate-y-0.5 min-w-0">
+                                            <div className="min-w-0 flex-1 overflow-hidden">
+                                                <p className="font-bold text-blue-900 truncate">{staff.name}</p>
+                                                <p className="text-xs text-blue-700 truncate">{staff.position}</p>
+                                            </div>
+                                            <div className="flex-shrink-0 text-right pl-1">
+                                                <span className="inline-block px-2.5 py-1 bg-blue-200 text-blue-900 text-xs font-black rounded-full whitespace-nowrap">
+                                                    {calculateTotalCompletion(staff)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {meetsStaff.length === 0 && (
+                                        <p className="text-sm text-slate-500 italic p-4 text-center bg-slate-50 rounded-xl">មិនមានទិន្នន័យសម្រាប់ពេលនេះ...</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col max-h-[600px]">
+                                <h3 className="text-lg font-bold text-rose-700 mb-4 flex items-center gap-2">⚠️ ត្រូវការស្ថាបនា (Needs Improvement)</h3>
+                                <div className="space-y-3 overflow-y-auto pr-2 flex-1">
+                                    {belowStaff.map((staff, i) => (
+                                        <div key={i} onClick={() => setSelectedStaffInfo(staff)} className="cursor-pointer flex items-center justify-between gap-2 p-3 bg-rose-50 rounded-xl border border-rose-100 transition hover:shadow-md hover:border-rose-300 hover:-translate-y-0.5 min-w-0">
+                                            <div className="min-w-0 flex-1 overflow-hidden">
+                                                <p className="font-bold text-rose-900 truncate">{staff.name}</p>
+                                                <p className="text-xs text-rose-700 truncate">{staff.position}</p>
+                                            </div>
+                                            <div className="flex-shrink-0 text-right pl-1">
+                                                <span className="inline-block px-2.5 py-1 bg-rose-200 text-rose-900 text-xs font-black rounded-full whitespace-nowrap">
+                                                    {calculateTotalCompletion(staff)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                     {belowStaff.length === 0 && (
+                                        <p className="text-sm text-slate-500 italic p-4 text-center bg-slate-50 rounded-xl">មិនមានទិន្នន័យសម្រាប់ពេលនេះ...</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderTable = () => {
+                return (
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center text-sm">
+                            <span className="text-indigo-800 font-semibold">
+                                📝 បញ្ចូល និងកែប្រែទិន្នន័យ (Data Entry Mode) - ទិន្នន័យនឹងត្រូវរក្សាទុកទៅ Firebase Firestore ផ្ទាល់
+                            </span>
+                        </div>
+                        <div className="table-container overflow-x-auto w-full max-h-[70vh]">
+                            <table className="w-full text-left border-collapse text-xs whitespace-nowrap min-w-max">
+                                <thead>
+                                    <tr className="bg-slate-800 text-white divide-x divide-slate-700">
+                                        <th colSpan="5" className="p-2 text-center sticky-col-1 bg-slate-900 z-20 sticky top-0">ព័ត៌មានបុគ្គលិក (Staff Info)</th>
+                                        <th colSpan="3" className="p-2 text-center bg-blue-900 sticky top-0">គោលដៅទី១ (Goal 1)</th>
+                                        <th colSpan="3" className="p-2 text-center bg-indigo-900 sticky top-0">គោលដៅទី២ (Goal 2)</th>
+                                        <th colSpan="3" className="p-2 text-center bg-violet-900 sticky top-0">គោលដៅទី៣ (Goal 3)</th>
+                                        <th colSpan="3" className="p-2 text-center bg-emerald-900 sticky top-0">លទ្ធផលសរុប (Evaluation)</th>
+                                    </tr>
+                                    <tr className="bg-slate-100 text-slate-700 font-semibold divide-x divide-slate-200 border-b border-slate-300">
+                                        <th className="p-2 w-10 text-center sticky-col-1 sticky top-[36px] bg-slate-100 z-20 border-r border-slate-300">No</th>
+                                        <th className="p-2 min-w-[150px] sticky-col-2 sticky top-[36px] bg-slate-100 z-20 border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">ឈ្មោះ (Name)</th>
+                                        <th className="p-2 min-w-[120px] sticky top-[36px] bg-slate-100">ផ្នែក (Dept)</th>
+                                        <th className="p-2 min-w-[120px] sticky top-[36px] bg-slate-100">តួនាទី (Role)</th>
+                                        <th className="p-2 w-24 sticky top-[36px] bg-slate-100">Date</th>
+                                        
+                                        <th className="p-2 min-w-[200px] bg-blue-50 sticky top-[36px]">គោលដៅ ០១ (Goal)</th>
+                                        <th className="p-2 w-24 bg-blue-50 sticky top-[36px]">Start - End</th>
+                                        <th className="p-2 w-16 text-center bg-blue-100 text-blue-900 sticky top-[36px]">%</th>
+
+                                        <th className="p-2 min-w-[200px] bg-indigo-50 sticky top-[36px]">គោលដៅ ០២ (Goal)</th>
+                                        <th className="p-2 w-24 bg-indigo-50 sticky top-[36px]">Start - End</th>
+                                        <th className="p-2 w-16 text-center bg-indigo-100 text-indigo-900 sticky top-[36px]">%</th>
+
+                                        <th className="p-2 min-w-[200px] bg-violet-50 sticky top-[36px]">គោលដៅ ០៣ (Goal)</th>
+                                        <th className="p-2 w-24 bg-violet-50 sticky top-[36px]">Start - End</th>
+                                        <th className="p-2 w-16 text-center bg-violet-100 text-violet-900 sticky top-[36px]">%</th>
+
+                                        <th className="p-2 w-32 text-center bg-emerald-50 text-emerald-900 sticky top-[36px]">K - ភាគរយសម្រេចបាន % (Completion %)</th>
+                                        <th className="p-2 min-w-[180px] text-center bg-emerald-50 text-emerald-900 sticky top-[36px]">N - ចំណាត់ថ្នាក់សមត្ថភាព (Performance Grade)</th>
+                                        <th className="p-2 w-16 text-center bg-rose-50 text-rose-900 sticky top-[36px] z-10">លុប (Action)</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-200">
+                                    {filteredData.map((item, idx) => {
+                                        const overallComp = calculateTotalCompletion(item);
+                                        const gradeInfo = getPerformanceGrade(overallComp);
+
+                                        return (
+                                            <tr key={item.id} id={`staff-row-${item.id}`} className="hover:bg-slate-50 transition bg-white divide-x divide-slate-100 duration-500">
+                                                <td className="p-2 text-center text-slate-500 font-medium sticky-col-1 bg-inherit border-r border-slate-200">{String(idx + 1).padStart(2, '0')}</td>
+                                                <td className="p-2 font-bold text-slate-800 sticky-col-2 bg-inherit border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                                                    <input id={`staff-name-input-${item.id}`} type="text" className="excel-input font-bold" value={item.name} onChange={(e) => handleCellChange(item.id, 'name', e.target.value)} />
+                                                </td>
+                                                <td className="p-2">
+                                                    <select className="excel-input text-slate-600 bg-transparent cursor-pointer w-full min-w-[150px]" value={item.department} onChange={(e) => handleCellChange(item.id, 'department', e.target.value)}>
+                                                        <option value="">ជ្រើសរើស (Select)</option>
+                                                        <option value="01 EXECS អគ្គនាយក និងប្រធាន (Executive Officer)">01 EXECS អគ្គនាយក និងប្រធាន (Executive Officer)</option>
+                                                        <option value="02 ADMIN រដ្ឋបាល (Administrator)">02 ADMIN រដ្ឋបាល (Administrator)</option>
+                                                        <option value="02 HR ធនធានមនុស្ស (Human Resources)">02 HR ធនធានមនុស្ស (Human Resources)</option>
+                                                        <option value="03 ACCOU គណនេយ្យ និងសន្និធិ (Accounting & Stock)">03 ACCOU គណនេយ្យ និងសន្និធិ (Accounting & Stock)</option>
+                                                        <option value="04 CASH បេឡាករ (Cashier)">04 CASH បេឡាករ (Cashier)</option>
+                                                        <option value="05 CUSTO លក់ និងទំនាក់ទំនងអតិថិជន (Sale & CRM)">05 CUSTO លក់ និងទំនាក់ទំនងអតិថិជន (Sale & CRM)</option>
+                                                        <option value="06 MARKE ក្រុមទីផ្សារ (Marketing Team)">06 MARKE ក្រុមទីផ្សារ (Marketing Team)</option>
+                                                        <option value="06 MEDIA ប្រព័ន្ធផ្សព្វផ្សាយ (Media)">06 MEDIA ប្រព័ន្ធផ្សព្វផ្សាយ (Media)</option>
+                                                        <option value="07 ISSUE ដោះស្រាយបញ្ហាអតិថិជន (Customer Issue)">07 ISSUE ដោះស្រាយបញ្ហាអតិថិជន (Customer Issue)</option>
+                                                        <option value="08 OPTIC ហាងវ៉ែនតា (Optical Shop)">08 OPTIC ហាងវ៉ែនតា (Optical Shop)</option>
+                                                        <option value="09 NURSE ក្រុមគ្រូពេទ្យអបិបាល (Nurse Team)">09 NURSE ក្រុមគ្រូពេទ្យអបិបាល (Nurse Team)</option>
+                                                        <option value="10 DOCTO ក្រុមវេជ្ជបណ្ឌិត (Doctor Team)">10 DOCTO ក្រុមវេជ្ជបណ្ឌិត (Doctor Team)</option>
+                                                        <option value="11 OPERA ក្រុមប្រតិបត្តិការ (Operation & Lead)">11 OPERA ក្រុមប្រតិបត្តិការ (Operation & Lead)</option>
+                                                        <option value="12 TRAIN បណ្តុះបណ្តាល (Training & Development)">12 TRAIN បណ្តុះបណ្តាល (Training & Development)</option>
+                                                    </select>
+                                                </td>
+                                                <td className="p-2"><input type="text" className="excel-input text-slate-600" value={item.position} onChange={(e) => handleCellChange(item.id, 'position', e.target.value)} /></td>
+                                                <td className="p-2"><input type="date" className="excel-input text-slate-500 text-[11px]" value={item.dateCreated} onChange={(e) => handleCellChange(item.id, 'dateCreated', e.target.value)} /></td>
+
+                                                <td className="p-1 bg-blue-50/30"><input type="text" className="excel-input" placeholder="Goal 1..." value={item.goal1} onChange={(e) => handleCellChange(item.id, 'goal1', e.target.value)} /></td>
+                                                <td className="p-1 bg-blue-50/30 text-[10px] text-slate-500">
+                                                    <input type="date" className="w-full bg-transparent outline-none mb-1" value={item.start1} onChange={(e) => handleCellChange(item.id, 'start1', e.target.value)} /><br/>
+                                                    <input type="date" className="w-full bg-transparent outline-none text-rose-500" value={item.finish1} onChange={(e) => handleCellChange(item.id, 'finish1', e.target.value)} />
+                                                </td>
+                                                <td className="p-1 bg-blue-50">
+                                                    <select className="excel-input text-center font-bold text-blue-700 cursor-pointer" value={item.progress1} onChange={(e) => handleCellChange(item.id, 'progress1', Number(e.target.value))}>
+                                                        <option value="0">0%</option>
+                                                        <option value="25">25%</option>
+                                                        <option value="50">50%</option>
+                                                        <option value="75">75%</option>
+                                                        <option value="100">100%</option>
+                                                        <option value="125">125%</option>
+                                                    </select>
+                                                </td>
+
+                                                <td className="p-1 bg-indigo-50/30"><input type="text" className="excel-input" placeholder="Goal 2..." value={item.goal2} onChange={(e) => handleCellChange(item.id, 'goal2', e.target.value)} /></td>
+                                                <td className="p-1 bg-indigo-50/30 text-[10px] text-slate-500">
+                                                    <input type="date" className="w-full bg-transparent outline-none mb-1" value={item.start2} onChange={(e) => handleCellChange(item.id, 'start2', e.target.value)} /><br/>
+                                                    <input type="date" className="w-full bg-transparent outline-none text-rose-500" value={item.finish2} onChange={(e) => handleCellChange(item.id, 'finish2', e.target.value)} />
+                                                </td>
+                                                <td className="p-1 bg-indigo-50">
+                                                    <select className="excel-input text-center font-bold text-indigo-700 cursor-pointer" value={item.progress2} onChange={(e) => handleCellChange(item.id, 'progress2', Number(e.target.value))}>
+                                                        <option value="0">0%</option>
+                                                        <option value="25">25%</option>
+                                                        <option value="50">50%</option>
+                                                        <option value="75">75%</option>
+                                                        <option value="100">100%</option>
+                                                        <option value="125">125%</option>
+                                                    </select>
+                                                </td>
+
+                                                <td className="p-1 bg-violet-50/30"><input type="text" className="excel-input" placeholder="Goal 3..." value={item.goal3} onChange={(e) => handleCellChange(item.id, 'goal3', e.target.value)} /></td>
+                                                <td className="p-1 bg-violet-50/30 text-[10px] text-slate-500">
+                                                    <input type="date" className="w-full bg-transparent outline-none mb-1" value={item.start3} onChange={(e) => handleCellChange(item.id, 'start3', e.target.value)} /><br/>
+                                                    <input type="date" className="w-full bg-transparent outline-none text-rose-500" value={item.finish3} onChange={(e) => handleCellChange(item.id, 'finish3', e.target.value)} />
+                                                </td>
+                                                <td className="p-1 bg-violet-50">
+                                                    <select className="excel-input text-center font-bold text-violet-700 cursor-pointer" value={item.progress3} onChange={(e) => handleCellChange(item.id, 'progress3', Number(e.target.value))}>
+                                                        <option value="0">0%</option>
+                                                        <option value="25">25%</option>
+                                                        <option value="50">50%</option>
+                                                        <option value="75">75%</option>
+                                                        <option value="100">100%</option>
+                                                        <option value="125">125%</option>
+                                                    </select>
+                                                </td>
+
+                                                <td className="p-2 text-center bg-emerald-50/50">
+                                                    <span className="text-lg font-black text-slate-800">{overallComp}%</span>
+                                                </td>
+                                                <td className="p-2 text-center bg-emerald-50/50">
+                                                    <div className={`px-2 py-1.5 rounded-md border text-xs font-bold ${gradeInfo.bg} ${gradeInfo.color} ${gradeInfo.border} flex flex-col`}>
+                                                        <span>{gradeInfo.grade}</span>
+                                                        <span className="text-[10px] font-normal mt-0.5">{gradeInfo.kh}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-2 text-center bg-rose-50/30">
+                                                    <button onClick={() => promptDeleteStaff(item.id)} className="text-rose-500 hover:text-rose-700 hover:bg-rose-100 p-1 rounded transition" title="លុបទិន្នន័យ (Delete)">
+                                                        <svg className="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            };
+
+            if (isLoading) {
+                return (
+                    <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
+                        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <p className="text-lg font-semibold">កំពុងទាញយកទិន្នន័យពី Firebase...</p>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen pb-12">
+                    <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+                        <div className="max-w-[1400px] mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-blue-600 rounded-lg shadow-inner">
+                                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight">មន្ទីរពេទ្យភ្នែកភ្នំពេញ (PPEC)</h1>
+                                    <p className="text-xs text-slate-300 mb-1">Staff Performance Dashboard - Firebase Backend</p>
+                                    
+                                    <div className="text-[11px] text-blue-200 font-mono flex items-center gap-1.5 bg-slate-800/80 w-fit px-2.5 py-1 rounded-md border border-slate-700 shadow-sm">
+                                        <span className="relative flex h-2 w-2">
+                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                        </span>
+                                        <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                        {currentTime.toLocaleString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex bg-slate-800 p-1 rounded-lg">
+                                <button onClick={() => setViewMode('dashboard')} className={`px-4 py-2 text-sm font-semibold rounded-md transition ${viewMode === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-slate-300 hover:text-white hover:bg-slate-700'}`}>
+                                    📊 Dashboard
+                                </button>
+                                <button onClick={() => setViewMode('sheet')} className={`px-4 py-2 text-sm font-semibold rounded-md transition ${viewMode === 'sheet' ? 'bg-emerald-600 text-white shadow' : 'text-slate-300 hover:text-white hover:bg-slate-700'}`}>
+                                    📑 Data Entry Table
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-[1400px] mx-auto px-4 py-6">
+                        <div className="flex flex-col sm:flex-row items-center gap-3 mb-6 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
+                            <div className="relative w-full sm:w-72">
+                                <input 
+                                    type="text" placeholder="ស្វែងរកឈ្មោះ ឬតួនាទី..."
+                                    value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                />
+                                <svg className="w-4 h-4 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 1 1-14 0a7 7 0 0 1 14 0z"/></svg>
+                            </div>
+                            <select 
+                                value={selectedDept} onChange={(e) => setSelectedDept(e.target.value)}
+                                className="w-full sm:w-auto py-2 px-3 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                                <option value="All">គ្រប់ផ្នែកទាំងអស់ (All Departments)</option>
+                                <option value="01 EXECS អគ្គនាយក និងប្រធាន (Executive Officer)">01 EXECS អគ្គនាយក និងប្រធាន (Executive Officer)</option>
+                                <option value="02 ADMIN រដ្ឋបាល (Administrator)">02 ADMIN រដ្ឋបាល (Administrator)</option>
+                                <option value="02 HR ធនធានមនុស្ស (Human Resources)">02 HR ធនធានមនុស្ស (Human Resources)</option>
+                                <option value="03 ACCOU គណនេយ្យ និងសន្និធិ (Accounting & Stock)">03 ACCOU គណនេយ្យ និងសន្និធិ (Accounting & Stock)</option>
+                                <option value="04 CASH បេឡាករ (Cashier)">04 CASH បេឡាករ (Cashier)</option>
+                                <option value="05 CUSTO លក់ និងទំនាក់ទំនងអតិថិជន (Sale & CRM)">05 CUSTO លក់ និងទំនាក់ទំនងអតិថិជន (Sale & CRM)</option>
+                                <option value="06 MARKE ក្រុមទីផ្សារ (Marketing Team)">06 MARKE ក្រុមទីផ្សារ (Marketing Team)</option>
+                                <option value="06 MEDIA ប្រព័ន្ធផ្សព្វផ្សាយ (Media)">06 MEDIA ប្រព័ន្ធផ្សព្វផ្សាយ (Media)</option>
+                                <option value="07 ISSUE ដោះស្រាយបញ្ហាអតិថិជន (Customer Issue)">07 ISSUE ដោះស្រាយបញ្ហាអតិថិជន (Customer Issue)</option>
+                                <option value="08 OPTIC ហាងវ៉ែនតា (Optical Shop)">08 OPTIC ហាងវ៉ែនតា (Optical Shop)</option>
+                                <option value="09 NURSE ក្រុមគ្រូពេទ្យអបិបាល (Nurse Team)">09 NURSE ក្រុមគ្រូពេទ្យអបិបាល (Nurse Team)</option>
+                                <option value="10 DOCTO ក្រុមវេជ្ជបណ្ឌិត (Doctor Team)">10 DOCTO ក្រុមវេជ្ជបណ្ឌិត (Doctor Team)</option>
+                                <option value="11 OPERA ក្រុមប្រតិបត្តិការ (Operation & Lead)">11 OPERA ក្រុមប្រតិបត្តិការ (Operation & Lead)</option>
+                                <option value="12 TRAIN បណ្តុះបណ្តាល (Training & Development)">12 TRAIN បណ្តុះបណ្តាល (Training & Development)</option>
+                            </select>
+                            <select 
+                                value={selectedGrade} onChange={(e) => setSelectedGrade(e.target.value)}
+                                className="w-full sm:w-auto py-2 px-3 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold text-slate-700"
+                            >
+                                <option value="All">ចំណាត់ថ្នាក់ទាំងអស់ (All Grades)</option>
+                                <option value="Exceeds Expectations">Exceeds Expectations</option>
+                                <option value="Meets Expectations">Meets Expectations</option>
+                                <option value="Needs Improvement">Needs Improvement</option>
+                            </select>
+                            
+                            <div className="ml-auto text-sm flex items-center gap-2">
+                                <strong className="text-slate-800 bg-slate-100 px-2 py-1 rounded hidden md:inline mr-2">{filteredData.length} នាក់</strong>
+                                
+                                <button onClick={handleManualSave} disabled={isSaving} className={`px-3 py-2 text-white rounded-lg text-sm font-semibold shadow-sm transition flex items-center gap-1.5 whitespace-nowrap ${saveStatus.includes('Saved') ? 'bg-emerald-500' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                        <polyline strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" points="17 21 17 13 7 13 7 21"></polyline>
+                                        <polyline strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" points="7 3 7 8 15 8"></polyline>
+                                    </svg>
+                                    <span className="hidden sm:inline">{saveStatus}</span>
+                                </button>
+
+                                <button onClick={promptImport} className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold shadow-sm transition flex items-center gap-1.5 whitespace-nowrap">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                                    <span className="hidden sm:inline">Import</span>
+                                </button>
+                                <input id="csv-import-input" type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
+
+                                <button onClick={handleExportCSV} className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold shadow-sm transition flex items-center gap-1.5 whitespace-nowrap">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                                    <span className="hidden sm:inline">Export</span>
+                                </button>
+
+                                <button onClick={handleAddStaff} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm transition flex items-center gap-1.5 whitespace-nowrap">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                                    <span className="hidden sm:inline">បន្ថែម</span> (Add)
+                                </button>
+                            </div>
+                        </div>
+
+                        {viewMode === 'dashboard' ? renderDashboard() : renderTable()}
+                    </main>
+
+                    {/* Delete Confirmation Modal */}
+                    {deleteTargetId !== null && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                            <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 border border-slate-200">
+                                <div className="mx-auto w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center mb-4">
+                                    <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                    </svg>
+                                </div>
+                                <h3 className="text-lg font-bold text-slate-900 mb-2 text-center">
+                                    បញ្ជាក់ការលុបទិន្នន័យ
+                                </h3>
+                                <p className="text-sm text-slate-600 mb-4 text-center">
+                                    សូមបញ្ចូលលេខសម្ងាត់ (Password) ដើម្បីអនុញ្ញាតឲ្យមានការលុបទិន្នន័យបុគ្គលិកនេះ៖
+                                </p>
+                                <input 
+                                    type="password"
+                                    value={deletePassword}
+                                    onChange={(e) => {
+                                        setDeletePassword(e.target.value);
+                                        setDeleteError("");
+                                    }}
+                                    onKeyDown={(e) => e.key === 'Enter' && confirmDelete()}
+                                    placeholder="បញ្ចូលលេខសម្ងាត់..."
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-2 focus:ring-2 focus:ring-rose-500 focus:outline-none text-center tracking-widest font-mono"
+                                    autoFocus
+                                />
+                                {deleteError && (
+                                    <p className="text-xs text-rose-600 mb-4 text-center font-semibold bg-rose-50 py-1 rounded">{deleteError}</p>
+                                )}
+                                <div className="flex justify-center gap-3 mt-5">
+                                    <button 
+                                        onClick={cancelDelete}
+                                        className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition w-full"
+                                    >
+                                        បោះបង់ (Cancel)
+                                    </button>
+                                    <button 
+                                        onClick={confirmDelete}
+                                        className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-semibold transition shadow-sm w-full"
+                                    >
+                                        លុប (Delete)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Import Confirmation Modal */}
+                    {showImportAuth && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                            <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 border border-slate-200">
+                                <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8V7a4 4 0 00-8 0v4h8z"/>
+                                    </svg>
+                                </div>
+                                <h3 className="text-lg font-bold text-slate-900 mb-2 text-center">
+                                    បញ្ជាក់ការទាញយកទិន្នន័យ (Import)
+                                </h3>
+                                <p className="text-sm text-slate-600 mb-4 text-center">
+                                    សូមបញ្ចូលលេខសម្ងាត់ (Password) ដើម្បីអនុញ្ញាតឲ្យមានការ Import ទិន្នន័យចូល៖
+                                </p>
+                                <input 
+                                    type="password"
+                                    value={importPassword}
+                                    onChange={(e) => {
+                                        setImportPassword(e.target.value);
+                                        setImportError(""); 
+                                    }}
+                                    onKeyDown={(e) => e.key === 'Enter' && confirmImportAuth()}
+                                    placeholder="បញ្ចូលលេខសម្ងាត់..."
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-center tracking-widest font-mono"
+                                    autoFocus
+                                />
+                                {importError && (
+                                    <p className="text-xs text-rose-600 mb-4 text-center font-semibold bg-rose-50 py-1 rounded">{importError}</p>
+                                )}
+                                <div className="flex justify-center gap-3 mt-5">
+                                    <button 
+                                        onClick={cancelImportAuth}
+                                        className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition w-full"
+                                    >
+                                        បោះបង់ (Cancel)
+                                    </button>
+                                    <button 
+                                        onClick={confirmImportAuth}
+                                        className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition shadow-sm w-full"
+                                    >
+                                        យល់ព្រម (Confirm)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Staff Details Modal */}
+                    {selectedStaffInfo && (() => {
+                        const c1 = getProgressColor(selectedStaffInfo.progress1);
+                        const c2 = getProgressColor(selectedStaffInfo.progress2);
+                        const c3 = getProgressColor(selectedStaffInfo.progress3);
+
+                        return (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" onClick={() => setSelectedStaffInfo(null)}>
+                                <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                                    <div className="p-6 bg-slate-800 text-white relative">
+                                        <div className="absolute top-4 right-4 flex items-center gap-2">
+                                            <button onClick={() => handleGoToEdit(selectedStaffInfo.id)} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition shadow-sm border border-blue-500" title="កែប្រែទិន្នន័យ (Edit)">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                                <span className="hidden sm:inline">កែប្រែ (Edit)</span>
+                                            </button>
+                                            <button onClick={() => setSelectedStaffInfo(null)} className="text-slate-300 hover:text-white hover:bg-slate-700 p-2 rounded-lg transition" title="បិទ (Close)">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-16 h-16 rounded-full bg-slate-600 flex items-center justify-center text-2xl font-bold border-2 border-slate-500 shadow-inner">
+                                                {selectedStaffInfo.name ? selectedStaffInfo.name.charAt(0) : '?'}
+                                            </div>
+                                            <div>
+                                                <h2 className="text-2xl font-bold text-white mb-1">{selectedStaffInfo.name}</h2>
+                                                <p className="text-sm text-slate-300 font-medium">{selectedStaffInfo.position} • <span className="text-blue-300">{selectedStaffInfo.department}</span></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="p-6 overflow-y-auto space-y-5 bg-slate-50">
+                                        <div className={`bg-white p-5 rounded-xl border ${c1.border} shadow-sm relative overflow-hidden`}>
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${c1.side}`}></div>
+                                            <div className="flex justify-between items-start mb-2 pl-3">
+                                                <div>
+                                                    <span className={`text-xs font-bold ${c1.textHeader} uppercase tracking-wider`}>គោលដៅទី១ (Goal 1)</span>
+                                                    <p className="text-slate-800 font-semibold text-[15px] mt-1">{selectedStaffInfo.goal1 || <span className="text-slate-400 italic font-normal">មិនមានទិន្នន័យ (No Data)</span>}</p>
+                                                </div>
+                                                <span className={`${c1.textPercent} font-black text-xl ${c1.bgPercent} px-3 py-1 rounded-lg`}>{selectedStaffInfo.progress1}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-100 rounded-full h-2 mt-4 ml-3 w-[calc(100%-12px)]">
+                                                <div className={`${c1.bar} h-2 rounded-full transition-all duration-1000 ease-out`} style={{ width: `${Math.max(0, Number(selectedStaffInfo.progress1) || 0)}%` }}></div>
+                                            </div>
+                                        </div>
+
+                                        <div className={`bg-white p-5 rounded-xl border ${c2.border} shadow-sm relative overflow-hidden`}>
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${c2.side}`}></div>
+                                            <div className="flex justify-between items-start mb-2 pl-3">
+                                                <div>
+                                                    <span className={`text-xs font-bold ${c2.textHeader} uppercase tracking-wider`}>គោលដៅទី២ (Goal 2)</span>
+                                                    <p className="text-slate-800 font-semibold text-[15px] mt-1">{selectedStaffInfo.goal2 || <span className="text-slate-400 italic font-normal">មិនមានទិន្នន័យ (No Data)</span>}</p>
+                                                </div>
+                                                <span className={`${c2.textPercent} font-black text-xl ${c2.bgPercent} px-3 py-1 rounded-lg`}>{selectedStaffInfo.progress2}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-100 rounded-full h-2 mt-4 ml-3 w-[calc(100%-12px)]">
+                                                <div className={`${c2.bar} h-2 rounded-full transition-all duration-1000 ease-out`} style={{ width: `${Math.max(0, Number(selectedStaffInfo.progress2) || 0)}%` }}></div>
+                                            </div>
+                                        </div>
+
+                                        <div className={`bg-white p-5 rounded-xl border ${c3.border} shadow-sm relative overflow-hidden`}>
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${c3.side}`}></div>
+                                            <div className="flex justify-between items-start mb-2 pl-3">
+                                                <div>
+                                                    <span className={`text-xs font-bold ${c3.textHeader} uppercase tracking-wider`}>គោលដៅទី៣ (Goal 3)</span>
+                                                    <p className="text-slate-800 font-semibold text-[15px] mt-1">{selectedStaffInfo.goal3 || <span className="text-slate-400 italic font-normal">មិនមានទិន្នន័យ (No Data)</span>}</p>
+                                                </div>
+                                                <span className={`${c3.textPercent} font-black text-xl ${c3.bgPercent} px-3 py-1 rounded-lg`}>{selectedStaffInfo.progress3}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-100 rounded-full h-2 mt-4 ml-3 w-[calc(100%-12px)]">
+                                                <div className={`${c3.bar} h-2 rounded-full transition-all duration-1000 ease-out`} style={{ width: `${Math.max(0, Number(selectedStaffInfo.progress3) || 0)}%` }}></div>
+                                            </div>
+                                        </div>
+
+                                    </div>
+
+                                    <div className={`p-5 border-t border-slate-200 flex justify-between items-center ${getPerformanceGrade(calculateTotalCompletion(selectedStaffInfo)).bg}`}>
+                                        <div>
+                                            <span className="text-slate-600 font-semibold text-xs uppercase tracking-wider block mb-1">ចំណាត់ថ្នាក់សមត្ថភាព (Performance Grade)</span>
+                                            <span className={`font-black text-lg ${getPerformanceGrade(calculateTotalCompletion(selectedStaffInfo)).color}`}>
+                                                {getPerformanceGrade(calculateTotalCompletion(selectedStaffInfo)).kh} ({getPerformanceGrade(calculateTotalCompletion(selectedStaffInfo)).grade})
+                                            </span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-slate-600 font-semibold text-xs uppercase tracking-wider block mb-1">ភាគរយសរុប</span>
+                                            <span className="text-3xl font-black text-slate-800">{calculateTotalCompletion(selectedStaffInfo)}%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
